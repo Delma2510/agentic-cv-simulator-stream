@@ -79,29 +79,36 @@ class AgenteGitHub:
         import os
         import shutil
         
-        # 1. Encontrar la ruta absoluta de npx en Windows o Linux/Mac
-        nombre_cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
-        ruta_ejecutable = shutil.which(nombre_cmd) or shutil.which("npx")
-        
-        # Si shutil no lo encuentra, intentamos una ruta por defecto típica de Windows
-        if not r_ejecutable y platform.system() == "Windows":
-            ruta_posible = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs", "npx.cmd")
-            if os.path.exists(ruta_posible):
-                ruta_ejecutable = ruta_posible
+        # 1. Determinar el comando correcto según el entorno (Local vs Nube)
+        if platform.system() == "Windows":
+            nombre_cmd = "npx.cmd"
+            ruta_ejecutable = shutil.which(nombre_cmd) or shutil.which("npx")
+            if not ruta_ejecutable:
+                ruta_posible = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs", "npx.cmd")
+                if os.path.exists(ruta_posible):
+                    ruta_ejecutable = ruta_posible
+        else:
+            # Entorno de producción en Streamlit Cloud (Linux)
+            nombre_cmd = "npx"
+            ruta_ejecutable = shutil.which(nombre_cmd)
 
         if not ruta_ejecutable:
-            return "Error: No se encontró 'npx' en el sistema. Asegúrate de tener Node.js instalado y en tu PATH."
+            return "Error: No se encontró 'npx' en el entorno de ejecución. Revisa packages.txt en la nube."
         
+        # 2. Leer credenciales de manera híbrida (.env local o st.secrets en la nube)
         token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token and "GITHUB_PERSONAL_ACCESS_TOKEN" in st.secrets:
+            token = st.secrets["GITHUB_PERSONAL_ACCESS_TOKEN"]
+            
         if not token:
-            return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en el archivo .env"
+            return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en las variables de entorno ni en Secrets."
 
-        # 2. Configurar los parámetros con la ruta completa e inyectar el PATH del sistema operativo
+        # 3. Configurar parámetros del servidor MCP
         server_params = StdioServerParameters(
             command=ruta_ejecutable,
             args=["-y", "@modelcontextprotocol/server-github"],
             env={
-                "PATH": os.environ.get("PATH", ""),  # Crucial para que npx encuentre el ejecutable de 'node'
+                "PATH": os.environ.get("PATH", ""), # Permite que npx localice el binario de node
                 "GITHUB_PERSONAL_ACCESS_TOKEN": token
             }
         )

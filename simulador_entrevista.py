@@ -1,3 +1,119 @@
+import asyncio
+import os
+import json
+import re
+import streamlit as st
+from pypdf import PdfReader
+from groq import Groq
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+from dotenv import load_dotenv
+load_dotenv()
+
+github_api_key = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+
+# ==========================================
+# CONFIGURACIÓN DE LA PÁGINA (STREAMLIT)
+# ==========================================
+st.set_page_config(page_title="Simulador de Entrevista - Banorte", page_icon="🤖", layout="centered")
+st.title("🎙️ Simulador de Entrevista: Delma vs Banorte")
+st.caption("Arquitectura Multi-Agente con RAG (CV PDF) y Conector MCP GitHub")
+
+# 3. Inicializar el cliente tomando la variable de entorno de forma segura
+@st.cache_resource
+def get_groq_client():
+    # os.environ.get buscará la variable tanto en tu sistema local (.env) como en los entornos de producción
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        st.error("❌ ERROR: No se encontró la variable de entorno GROQ_API_KEY.")
+    return Groq(api_key=api_key)
+
+client = get_groq_client()
+
+# ==========================================
+# MODELO DE DATOS Y COMPONENTES REUTILIZABLES
+# ==========================================
+class AgenteCV:
+    def __init__(self, ruta_pdf):
+        self.ruta_pdf = ruta_pdf
+        self.chunks = []
+        self._inicializar_rag()
+
+    def _inicializar_rag(self):
+        if not os.path.exists(self.ruta_pdf):
+            raise FileNotFoundError(f"No se encontró el archivo: {self.ruta_pdf}")
+        reader = PdfReader(self.ruta_pdf)
+        texto_completo = ""
+        for pagina in reader.pages:
+            texto_pagina = pagina.extract_text()
+            if texto_pagina:
+                texto_completo += texto_pagina + "\n"
+        
+        palabras = texto_completo.strip().split()
+        i = 0
+        while i < len(palabras):
+            chunk = " ".join(palabras[i:i + 400])
+            self.chunks.append(chunk)
+            i += 400 - 50
+
+    def extraer_informacion_relevante(self, consulta):
+        palabras_clave = set(re.findall(r'\w+', consulta.lower()))
+        conectores = {'el', 'la', 'los', 'las', 'un', 'una', 'en', 'de', 'del', 'que', 'es', 'son', 'cual', 'cuales'}
+        palabras_clave = palabras_clave - conectores
+        
+        puntuaciones = []
+        for chunk in self.chunks:
+            coincidencias = sum(1 for palabra in palabras_clave if palabra in chunk.lower())
+            puntuaciones.append((coincidencias, chunk))
+        
+        puntuaciones.sort(key=lambda x: x[0], reverse=True)
+        return puntuaciones[0][1] if puntuaciones and puntuaciones[0][0] > 0 else "Usa tu conocimiento general del CV de Delma."
+
+class AgenteGitHub:
+    def __init__(self, usuario):
+        self.usuario = usuario
+
+    async def consultar_repositorios_reales(self):
+        server_params = StdioServerParameters(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={
+                **os.environ,
+                "GITHUB_PERSONAL_ACCESS_TOKEN": os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", github_api_key)
+            }
+        )
+        try:
+            async with stdio_client(server_params) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    resultado_mcp = await session.call_tool("search_repositories", arguments={"query": f"user:{self.usuario}"})
+                    
+                    texto_github = ""
+                    for content_item in resultado_mcp.content:
+                        if hasattr(content_item, "text"):
+                            texto_github += content_item.text + "\n"
+                    return texto_github
+        except Exception as e:
+            return f"Error al extraer datos de GitHub mediante el Servidor MCP: {e}"
+
+# Instanciar agentes en el estado de la sesión si no existen
+if "agente_cv" not in st.session_state:
+    try:
+        st.session_state.agente_cv = AgenteCV("cv_delma_diaz.pdf")
+        st.session_state.agente_github = AgenteGitHub("Delma2510")
+    except Exception as e:
+        st.error(f"Falta el archivo PDF o configuración: {e}")
+
+# Inicializar historial de chat visual
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Redibujar la conversación histórica en la pantalla
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
 # ==========================================
 # PROCESAMIENTO ASÍNCRONO DE LA PREGUNTA (CORREGIDO)
 # ==========================================

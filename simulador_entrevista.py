@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import re
+import platform  # <-- Añade este import
 import streamlit as st
 from pypdf import PdfReader
 from groq import Groq
@@ -10,8 +11,6 @@ from mcp.client.stdio import stdio_client
 
 from dotenv import load_dotenv
 load_dotenv()
-
-github_api_key = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA (STREAMLIT)
@@ -75,12 +74,19 @@ class AgenteGitHub:
         self.usuario = usuario
 
     async def consultar_repositorios_reales(self):
+        # Asegurar el ejecutable correcto en Windows
+        cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
+        
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en el archivo .env"
+
         server_params = StdioServerParameters(
-            command="npx",
+            command=cmd,
             args=["-y", "@modelcontextprotocol/server-github"],
             env={
-                **os.environ,
-                "GITHUB_PERSONAL_ACCESS_TOKEN": os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", github_api_key)
+                "PATH": os.environ.get("PATH", ""), # Crucial para que Python encuentre Node/NPX
+                "GITHUB_PERSONAL_ACCESS_TOKEN": token
             }
         )
         try:
@@ -93,7 +99,7 @@ class AgenteGitHub:
                     for content_item in resultado_mcp.content:
                         if hasattr(content_item, "text"):
                             texto_github += content_item.text + "\n"
-                    return texto_github
+                    return texto_github if texto_github.strip() else "No se encontraron repositorios públicos."
         except Exception as e:
             return f"Error al extraer datos de GitHub mediante el Servidor MCP: {e}"
 
@@ -190,9 +196,17 @@ if pregunta_entrevistador := st.chat_input("Escribe aquí la pregunta del entrev
     # 2. Procesar respuesta controlando el loop de Streamlit
     with st.chat_message("assistant", avatar="✨"):
         with st.spinner("Delma está pensando su respuesta..."):
-            # Creamos un loop de eventos limpio para evitar la doble ejecución en terminal
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            
+            # Traemos los datos crudos de GitHub para auditoría
+            datos_github_debug = loop.run_until_complete(st.session_state.agente_github.consultar_repositorios_reales())
+            
+            # Mostramos un expansor en Streamlit para verificar qué está leyendo la IA
+            with st.expander("🛠️ Depuración MCP: Datos crudos de GitHub"):
+                st.code(datos_github_debug, language="text")
+            
+            # Corremos la respuesta final del agente
             respuesta_delma = loop.run_until_complete(procesar_respuesta_agente(pregunta_entrevistador))
             loop.close()
             

@@ -2,13 +2,12 @@ import asyncio
 import os
 import json
 import re
-import platform  # <-- Añade este import
+import platform  
 import streamlit as st
 from pypdf import PdfReader
 from groq import Groq
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import shutil
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -73,40 +72,23 @@ class AgenteCV:
 class AgenteGitHub:
     def __init__(self, usuario):
         self.usuario = usuario
-    async def consultar_repositorios_reales(self):
-        import platform
-        import os
-        import shutil
-        
-        # 1. Determinar el comando correcto según el entorno (Local vs Nube)
-        if platform.system() == "Windows":
-            nombre_cmd = "npx.cmd"
-            ruta_ejecutable = shutil.which(nombre_cmd) or shutil.which("npx")
-            if not ruta_ejecutable:
-                ruta_posible = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs", "npx.cmd")
-                if os.path.exists(ruta_posible):
-                    ruta_ejecutable = ruta_posible
-        else:
-            # Entorno de producción en Streamlit Cloud (Linux)
-            nombre_cmd = "npx"
-            ruta_ejecutable = shutil.which(nombre_cmd)
-            
-            # PARCHE PARA LA NUBE: Si Linux no encuentra 'npx' en el PATH básico, buscamos en rutas comunes
-            if not ruta_ejecutable:
-                rutas_comunes_linux = [
-                    "/usr/bin/npx",
-                    "/usr/local/bin/npx",
-                    "/home/appuser/.npm-global/bin/npx",
-                    "/usr/sbin/npx"
-                ]
-                for ruta in rutas_comunes_linux:
-                    if os.path.exists(ruta):
-                        ruta_ejecutable = ruta
-                        break
 
-        if not ruta_ejecutable:
-            return "Error: No se encontró 'npx' en el entorno de ejecución. Revisa packages.txt en la nube."
+    async def consultar_repositorios_reales(self):
+        # Asegurar el ejecutable correcto en Windows
+        cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
         
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en el archivo .env"
+
+        server_params = StdioServerParameters(
+            command=cmd,
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={
+                "PATH": os.environ.get("PATH", ""), # Crucial para que Python encuentre Node/NPX
+                "GITHUB_PERSONAL_ACCESS_TOKEN": token
+            }
+        )
         try:
             async with stdio_client(server_params) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:

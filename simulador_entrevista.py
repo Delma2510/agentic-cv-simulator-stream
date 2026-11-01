@@ -73,7 +73,6 @@ class AgenteCV:
 class AgenteGitHub:
     def __init__(self, usuario):
         self.usuario = usuario
-
     async def consultar_repositorios_reales(self):
         import platform
         import os
@@ -91,27 +90,22 @@ class AgenteGitHub:
             # Entorno de producción en Streamlit Cloud (Linux)
             nombre_cmd = "npx"
             ruta_ejecutable = shutil.which(nombre_cmd)
+            
+            # PARCHE PARA LA NUBE: Si Linux no encuentra 'npx' en el PATH básico, buscamos en rutas comunes
+            if not ruta_ejecutable:
+                rutas_comunes_linux = [
+                    "/usr/bin/npx",
+                    "/usr/local/bin/npx",
+                    "/home/appuser/.npm-global/bin/npx",
+                    "/usr/sbin/npx"
+                ]
+                for ruta in rutas_comunes_linux:
+                    if os.path.exists(ruta):
+                        ruta_ejecutable = ruta
+                        break
 
         if not ruta_ejecutable:
             return "Error: No se encontró 'npx' en el entorno de ejecución. Revisa packages.txt en la nube."
-        
-        # 2. Leer credenciales de manera híbrida (.env local o st.secrets en la nube)
-        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        if not token and "GITHUB_PERSONAL_ACCESS_TOKEN" in st.secrets:
-            token = st.secrets["GITHUB_PERSONAL_ACCESS_TOKEN"]
-            
-        if not token:
-            return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en las variables de entorno ni en Secrets."
-
-        # 3. Configurar parámetros del servidor MCP
-        server_params = StdioServerParameters(
-            command=ruta_ejecutable,
-            args=["-y", "@modelcontextprotocol/server-github"],
-            env={
-                "PATH": os.environ.get("PATH", ""), # Permite que npx localice el binario de node
-                "GITHUB_PERSONAL_ACCESS_TOKEN": token
-            }
-        )
         
         try:
             async with stdio_client(server_params) as (read_stream, write_stream):

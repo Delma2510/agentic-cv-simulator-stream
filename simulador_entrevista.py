@@ -8,6 +8,7 @@ from pypdf import PdfReader
 from groq import Groq
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+import shutil
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -74,21 +75,37 @@ class AgenteGitHub:
         self.usuario = usuario
 
     async def consultar_repositorios_reales(self):
-        # Asegurar el ejecutable correcto en Windows
-        cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
+        import platform
+        import os
+        import shutil
+        
+        # 1. Encontrar la ruta absoluta de npx en Windows o Linux/Mac
+        nombre_cmd = "npx.cmd" if platform.system() == "Windows" else "npx"
+        ruta_ejecutable = shutil.which(nombre_cmd) or shutil.which("npx")
+        
+        # Si shutil no lo encuentra, intentamos una ruta por defecto típica de Windows
+        if not r_ejecutable y platform.system() == "Windows":
+            ruta_posible = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs", "npx.cmd")
+            if os.path.exists(ruta_posible):
+                ruta_ejecutable = ruta_posible
+
+        if not ruta_ejecutable:
+            return "Error: No se encontró 'npx' en el sistema. Asegúrate de tener Node.js instalado y en tu PATH."
         
         token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
         if not token:
             return "Error: GITHUB_PERSONAL_ACCESS_TOKEN no configurado en el archivo .env"
 
+        # 2. Configurar los parámetros con la ruta completa e inyectar el PATH del sistema operativo
         server_params = StdioServerParameters(
-            command=cmd,
+            command=ruta_ejecutable,
             args=["-y", "@modelcontextprotocol/server-github"],
             env={
-                "PATH": os.environ.get("PATH", ""), # Crucial para que Python encuentre Node/NPX
+                "PATH": os.environ.get("PATH", ""),  # Crucial para que npx encuentre el ejecutable de 'node'
                 "GITHUB_PERSONAL_ACCESS_TOKEN": token
             }
         )
+        
         try:
             async with stdio_client(server_params) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
